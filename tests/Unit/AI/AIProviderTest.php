@@ -8,6 +8,7 @@ function providerKeys(): array
         'openai' => ! empty(env('OPENAI_API_KEY')),
         'anthropic' => ! empty(env('ANTHROPIC_API_KEY')),
         'gemini' => ! empty(env('GEMINI_API_KEY')),
+        'ollama' => env('OLLAMA_AVAILABLE', true) !== false, // Default to true, can be disabled via env
     ];
 }
 
@@ -16,10 +17,11 @@ beforeEach(function () {
     $this->hasOpenAI = $keys['openai'];
     $this->hasAnthropic = $keys['anthropic'];
     $this->hasGemini = $keys['gemini'];
+    $this->hasOllama = $keys['ollama'];
 });
 
 test('environment variables are loaded from .env.testing', function () {
-    if (! ($this->hasOpenAI || $this->hasAnthropic || $this->hasGemini)) {
+    if (! ($this->hasOpenAI || $this->hasAnthropic || $this->hasGemini || $this->hasOllama)) {
         $this->markTestSkipped('API keys not found in environment. Skipping test.');
     }
 
@@ -36,6 +38,12 @@ test('environment variables are loaded from .env.testing', function () {
     if ($this->hasGemini) {
         expect(env('GEMINI_API_KEY'))->not()->toBeNull()
             ->toBeString();
+    }
+
+    // Ollama doesn't require API key, but we can check if base URL is configured
+    if ($this->hasOllama) {
+        $baseUrl = env('OLLAMA_BASE_URL', 'http://localhost:11434/v1');
+        expect($baseUrl)->toBeString()->not()->toBeEmpty();
     }
 });
 
@@ -88,6 +96,29 @@ test('can translate strings using Gemini', function () {
     config()->set('ai-translator.ai.model', 'gemini-2.5-pro');
     config()->set('ai-translator.ai.model', 'gemini-2.5-flash');
     config()->set('ai-translator.ai.api_key', env('GEMINI_API_KEY'));
+
+    $provider = new AIProvider(
+        'test.php',
+        ['greeting' => 'Hello, world!'],
+        'en',
+        'ko'
+    );
+
+    $result = $provider->translate();
+    expect($result)->toBeArray()->toHaveCount(1);
+});
+
+test('can translate strings using Ollama', function () {
+    if (! $this->hasOllama) {
+        $this->markTestSkipped('Ollama is not available. Skipping test.');
+    }
+
+    $baseUrl = env('OLLAMA_BASE_URL', 'http://localhost:11434/v1');
+    
+    config()->set('ai-translator.ai.provider', 'ollama');
+    config()->set('ai-translator.ai.model', 'qwen3:1.7b');
+    config()->set('ai-translator.ai.api_key', null);
+    config()->set('ai-translator.ai.ollama_base_url', $baseUrl);
 
     $provider = new AIProvider(
         'test.php',

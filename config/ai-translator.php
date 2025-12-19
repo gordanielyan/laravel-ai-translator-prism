@@ -32,6 +32,12 @@ return [
         // 'model' => 'gemini-2.5-pro-preview-05-06',
         // 'api_key' => env('GEMINI_API_KEY'),
 
+        // ollama (local)
+        // 'provider' => 'ollama',
+        // 'model' => 'qwen3:1.7b', // or any model you have installed locally (e.g., 'llama3.1', 'mistral', 'qwen2.5')
+        // 'api_key' => null, // Optional, not required for local Ollama
+        // 'ollama_base_url' => env('OLLAMA_BASE_URL', 'http://localhost:11434/v1'),
+
         // Additional options
         // 'retries' => 5,
         // 'max_tokens' => 4096,

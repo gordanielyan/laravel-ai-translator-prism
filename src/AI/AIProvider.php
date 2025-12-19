@@ -5,6 +5,7 @@ namespace Kargnas\LaravelAiTranslator\AI;
 use Illuminate\Support\Facades\Log;
 use Kargnas\LaravelAiTranslator\AI\Clients\AnthropicClient;
 use Kargnas\LaravelAiTranslator\AI\Clients\GeminiClient;
+use Kargnas\LaravelAiTranslator\AI\Clients\OllamaClient;
 use Kargnas\LaravelAiTranslator\AI\Clients\OpenAIClient;
 use Kargnas\LaravelAiTranslator\AI\Language\Language;
 use Kargnas\LaravelAiTranslator\AI\Language\LanguageRules;
@@ -385,6 +386,7 @@ class AIProvider
             'anthropic' => $this->getTranslatedObjectsFromAnthropic(),
             'openai' => $this->getTranslatedObjectsFromOpenAI(),
             'gemini' => $this->getTranslatedObjectsFromGemini(),
+            'ollama' => $this->getTranslatedObjectsFromOllama(),
             default => throw new \Exception("Provider {$this->configProvider} is not supported."),
         };
     }
@@ -456,6 +458,92 @@ class AIProvider
             // 토큰 사용량 콜백 호출 (설정된 경우)
             if ($this->onTokenUsage) {
                 ($this->onTokenUsage)($this->getTokenUsage());
+            }
+        }
+
+        return $responseParser->getTranslatedItems();
+    }
+
+    protected function getTranslatedObjectsFromOllama(): array
+    {
+        $baseUrl = config('ai-translator.ai.ollama_base_url', 'http://localhost:11434/v1');
+        $apiKey = config('ai-translator.ai.api_key');
+        $client = new OllamaClient($apiKey, $baseUrl);
+        $totalItems = count($this->strings);
+
+        // Initialize response parser
+        $responseParser = new AIResponseParser($this->onTranslated);
+
+        // Prepare request data (OpenAI-compatible format)
+        $requestData = [
+            'model' => $this->configModel,
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => $this->getSystemPrompt(),
+                ],
+                [
+                    'role' => 'user',
+                    'content' => $this->getUserPrompt(),
+                ],
+            ],
+            'temperature' => config('ai-translator.ai.temperature', 0),
+        ];
+
+        // Response text buffer
+        $responseText = '';
+
+        // Execute streaming request
+        if (! config('ai-translator.ai.disable_stream', false)) {
+            $requestData['stream'] = true;
+            $response = $client->createChatStream(
+                $requestData,
+                function ($chunk, $data) use (&$responseText, $responseParser) {
+                    // Extract text content
+                    if (isset($data['choices'][0]['delta']['content'])) {
+                        $content = $data['choices'][0]['delta']['content'];
+                        $responseText .= $content;
+
+                        // Parse response text to extract translated items
+                        $responseParser->parse($responseText);
+
+                        // Call progress callback with current response
+                        if ($this->onProgress) {
+                            ($this->onProgress)($content, $responseParser->getTranslatedItems());
+                        }
+                    }
+                }
+            );
+        } else {
+            // Non-streaming request
+            $response = $client->createChat($requestData);
+            $responseText = $response['choices'][0]['message']['content'] ?? '';
+            $responseParser->parse($responseText);
+
+            if ($this->onProgress) {
+                ($this->onProgress)($responseText, $responseParser->getTranslatedItems());
+            }
+
+            if ($this->onTranslated) {
+                foreach ($responseParser->getTranslatedItems() as $item) {
+                    ($this->onTranslated)($item, TranslationStatus::STARTED, $responseParser->getTranslatedItems());
+                    ($this->onTranslated)($item, TranslationStatus::COMPLETED, $responseParser->getTranslatedItems());
+                }
+            }
+
+            // Token usage callback (if available)
+            if ($this->onTokenUsage && isset($response['usage'])) {
+                $tokenUsage = [
+                    'input_tokens' => $response['usage']['prompt_tokens'] ?? 0,
+                    'output_tokens' => $response['usage']['completion_tokens'] ?? 0,
+                    'total_tokens' => $response['usage']['total_tokens'] ?? 0,
+                    'cache_creation_input_tokens' => null,
+                    'cache_read_input_tokens' => null,
+                ];
+                $this->inputTokens = $tokenUsage['input_tokens'];
+                $this->outputTokens = $tokenUsage['output_tokens'];
+                $this->totalTokens = $tokenUsage['total_tokens'];
+                ($this->onTokenUsage)($tokenUsage);
             }
         }
 
